@@ -360,7 +360,7 @@ fun LoopTimerScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "${strings.totalElapsed}:${formatDuration(timerState.totalElapsedMillis)}",
+                            text = "${strings.totalElapsed}: ${formatDuration(timerState.totalElapsedMillis)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -733,3 +733,517 @@ fun Orbit3DCountdown(
     )
     val orbitAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 8000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "orbitAngle"
+    )
+
+    val primaryColor = if (isWaitingOk) Color(0xFFEF4444) else Color(0xFF38BDF8)
+    val secondaryColor = if (isWaitingOk) Color(0xFFF97316) else Color(0xFF34D399)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(284.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(264.dp)) {
+            val w = size.width
+            val h = size.height
+            val cx = w / 2f
+            val cy = h / 2f + 6f
+            val radius = (minOf(w, h) * 0.38f) * (if (isWaitingOk) pulse else 1f)
+
+            drawOval(
+                color = Color.Black.copy(alpha = 0.35f),
+                topLeft = Offset(cx - radius * 0.85f, cy + radius * 0.72f),
+                size = Size(radius * 1.7f, radius * 0.34f)
+            )
+
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        primaryColor.copy(alpha = 0.18f),
+                        Color(0xFF0F172A).copy(alpha = 0.85f),
+                        Color(0xFF020617).copy(alpha = 0.95f)
+                    ),
+                    center = Offset(cx - radius * 0.25f, cy - radius * 0.25f),
+                    radius = radius * 1.15f
+                ),
+                radius = radius,
+                center = Offset(cx, cy)
+            )
+
+            drawArc(
+                color = Color.White.copy(alpha = 0.12f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(cx - radius, cy - radius),
+                size = Size(radius * 2f, radius * 2f),
+                style = Stroke(width = 14f, cap = StrokeCap.Round)
+            )
+
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colors = listOf(secondaryColor, primaryColor, secondaryColor)
+                ),
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                topLeft = Offset(cx - radius, cy - radius),
+                size = Size(radius * 2f, radius * 2f),
+                style = Stroke(width = 14f, cap = StrokeCap.Round)
+            )
+
+            rotate(degrees = -18f, pivot = Offset(cx, cy)) {
+                drawOval(
+                    color = primaryColor.copy(alpha = 0.35f),
+                    topLeft = Offset(cx - radius * 1.12f, cy - radius * 0.42f),
+                    size = Size(radius * 2.24f, radius * 0.84f),
+                    style = Stroke(width = 3f)
+                )
+
+                val rad = Math.toRadians(orbitAngle.toDouble())
+                val dotX = cx + (radius * 1.12f * cos(rad)).toFloat()
+                val dotY = cy + (radius * 0.42f * sin(rad)).toFloat()
+
+                drawCircle(
+                    color = Color.White,
+                    radius = 7f,
+                    center = Offset(dotX, dotY)
+                )
+                drawCircle(
+                    color = primaryColor.copy(alpha = 0.45f),
+                    radius = 14f,
+                    center = Offset(dotX, dotY)
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = lapText,
+                style = MaterialTheme.typography.labelSmall,
+                color = primaryColor,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = remainingText,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SoundBrowserSheet(
+    settings: SettingsManager,
+    currentTitle: String,
+    onDismiss: () -> Unit,
+    onSelected: (String, String?) -> Unit
+) {
+    val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var previewRingtone by remember { mutableStateOf<Ringtone?>(null) }
+    var playingUri by remember { mutableStateOf<String?>(null) }
+
+    val soundOptions = remember(strings) {
+        val list = mutableListOf(
+            SoundOption(title = strings.noSound, uriString = null)
+        )
+        val manager = RingtoneManager(context).apply {
+            setType(
+                RingtoneManager.TYPE_ALARM or
+                    RingtoneManager.TYPE_NOTIFICATION or
+                    RingtoneManager.TYPE_RINGTONE
+            )
+        }
+        val cursor = try {
+            manager.cursor
+        } catch (_: Exception) {
+            null
+        }
+        if (cursor != null && cursor.moveToFirst()) {
+            val seenUris = mutableSetOf<String>()
+            do {
+                val title = cursor.getString(RingtoneManager.TITLE_COLUMN_INDEX) ?: continue
+                val uri = manager.getRingtoneUri(cursor.position)?.toString() ?: continue
+                if (seenUris.add(uri)) {
+                    list.add(SoundOption(title = title, uriString = uri))
+                }
+            } while (cursor.moveToNext())
+        }
+        list
+    }
+
+    var selectedTitle by remember { mutableStateOf(currentTitle) }
+    var selectedUri by remember {
+        mutableStateOf(
+            if (currentTitle == strings.noSound) null else settings.ringtoneUri
+        )
+    }
+
+    fun stopPreview() {
+        try {
+            previewPlayer?.let { mp ->
+                if (mp.isPlaying) {
+                    mp.stop()
+                }
+                mp.release()
+            }
+        } catch (_: Exception) {
+        } finally {
+            previewPlayer = null
+        }
+        try {
+            previewRingtone?.stop()
+        } catch (_: Exception) {
+        } finally {
+            previewRingtone = null
+        }
+        playingUri = null
+    }
+
+    fun playPreview(uriString: String?) {
+        val wasSamePlaying = !uriString.isNullOrBlank() && playingUri == uriString
+        stopPreview()
+        if (uriString.isNullOrBlank() || wasSamePlaying) return
+
+        val uri = Uri.parse(uriString)
+        try {
+            val mp = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(context, uri)
+                isLooping = false
+                setOnCompletionListener {
+                    playingUri = null
+                }
+                prepare()
+                start()
+            }
+            previewPlayer = mp
+            playingUri = uriString
+        } catch (_: Exception) {
+            stopPreview()
+            try {
+                val rt = RingtoneManager.getRingtone(context, uri)
+                if (rt != null) {
+                    rt.audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .build()
+                    rt.play()
+                    previewRingtone = rt
+                    playingUri = uriString
+                }
+            } catch (_: Exception) {
+                stopPreview()
+            }
+        }
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            val fileName = resolveFileName(context, uri) ?: strings.customAudioFile
+            val uriStr = uri.toString()
+            selectedTitle = fileName
+            selectedUri = uriStr
+            playPreview(uriStr)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            stopPreview()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            stopPreview()
+            onDismiss()
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = strings.soundSheetTitle,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = strings.soundSheetHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(
+                onClick = {
+                    stopPreview()
+                    filePickerLauncher.launch(arrayOf("audio/*"))
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(strings.pickFromDevice)
+            }
+
+            if (selectedUri != null && soundOptions.none { it.uriString == selectedUri }) {
+                val isPlayingCustom = playingUri == selectedUri
+                ListItem(
+                    headlineContent = { Text(selectedTitle, fontWeight = FontWeight.SemiBold) },
+                    supportingContent = {
+                        Text(if (isPlayingCustom) strings.playingNow else strings.customAudioFile)
+                    },
+                    leadingContent = {
+                        RadioButton(
+                            selected = true,
+                            onClick = { playPreview(selectedUri) }
+                        )
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { playPreview(selectedUri) }) {
+                            Icon(
+                                imageVector = if (isPlayingCustom) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                contentDescription = strings.previewAction
+                            )
+                        }
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.clickable {
+                        playPreview(selectedUri)
+                    }
+                )
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(280.dp)
+            ) {
+                items(soundOptions) { item ->
+                    val isSelected = if (item.uriString == null) {
+                        selectedUri == null
+                    } else {
+                        item.uriString == selectedUri
+                    }
+                    val isPlayingThis = !item.uriString.isNullOrBlank() && playingUri == item.uriString
+
+                    ListItem(
+                        headlineContent = {
+                            Text(
+                                text = item.title,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        },
+                        supportingContent = if (isPlayingThis) {
+                            { Text(strings.playingNow, color = MaterialTheme.colorScheme.primary) }
+                        } else {
+                            null
+                        },
+                        leadingContent = {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedTitle = item.title
+                                    selectedUri = item.uriString
+                                    playPreview(item.uriString)
+                                }
+                            )
+                        },
+                        trailingContent = {
+                            if (item.uriString != null) {
+                                IconButton(
+                                    onClick = {
+                                        selectedTitle = item.title
+                                        selectedUri = item.uriString
+                                        playPreview(item.uriString)
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                        contentDescription = strings.previewAction,
+                                        tint = if (isPlayingThis)
+                                            MaterialTheme.colorScheme.primary
+                                        else
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        },
+                        modifier = Modifier.clickable {
+                            selectedTitle = item.title
+                            selectedUri = item.uriString
+                            playPreview(item.uriString)
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        stopPreview()
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(strings.cancel)
+                }
+                Button(
+                    onClick = {
+                        stopPreview()
+                        onSelected(selectedTitle, selectedUri)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(strings.select, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+private fun resolveFileName(context: Context, uri: Uri): String? {
+    return try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex >= 0 && cursor.moveToFirst()) {
+                cursor.getString(nameIndex)
+            } else {
+                null
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun vibrateTestPulse(context: Context) {
+    try {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        val effect = VibrationEffect.createOneShot(220L, VibrationEffect.DEFAULT_AMPLITUDE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val attrs = VibrationAttributes.Builder()
+                .setUsage(VibrationAttributes.USAGE_ALARM)
+                .build()
+            vibrator.vibrate(effect, attrs)
+        } else {
+            @Suppress("DEPRECATION")
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .build()
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(effect, audioAttrs)
+        }
+    } catch (_: Exception) {
+    }
+}
+
+@Composable
+fun PresetChip(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = false,
+        onClick = onClick,
+        label = {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(label, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun WheelPickerColumn(
+    label: String,
+    value: Int,
+    range: IntRange,
+    textColor: Int,
+    onValueChange: (Int) -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        AndroidView(
+            modifier = Modifier
+                .width(76.dp)
+                .height(140.dp),
+            factory = { ctx ->
+                NumberPicker(ctx).apply {
+                    minValue = range.first
+                    maxValue = range.last
+                    this.value = value
+                    setFormatter { itemValue -> String.format("%02d", itemValue) }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        this.textColor = textColor
+                        this.textSize = 68f
+                    }
+                    setOnValueChangedListener { _, _, newVal ->
+                        onValueChange(newVal)
+                    }
+                }
+            },
+            update = { picker ->
+                if (picker.value != value) {
+                    picker.value = value
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    picker.textColor = textColor
+                }
+            }
+        )
+    }
+}
