@@ -16,6 +16,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -88,11 +89,21 @@ class TimerService : Service() {
         return START_STICKY
     }
 
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        tickerJob?.cancel()
+        stopAlerts()
+        releaseWakeLock()
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
     private fun startSession(durationMs: Long) {
         stopAlerts()
         tickerJob?.cancel()
 
-        val now = android.os.SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
         intervalMillis = durationMs
         currentLap = 1
         isWaitingOk = false
@@ -119,7 +130,7 @@ class TimerService : Service() {
     private fun confirmNextLap() {
         if (!_state.value.isRunning || !isWaitingOk) return
 
-        val now = android.os.SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
         if (waitingStartElapsed > 0L) {
             accumulatedPausedMillis += (now - waitingStartElapsed).coerceAtLeast(0L)
             waitingStartElapsed = 0L
@@ -160,7 +171,7 @@ class TimerService : Service() {
         tickerJob?.cancel()
         tickerJob = serviceScope.launch {
             while (isActive) {
-                val now = android.os.SystemClock.elapsedRealtime()
+                val now = SystemClock.elapsedRealtime()
                 val totalElapsed = (now - sessionStartElapsed - accumulatedPausedMillis).coerceAtLeast(0L)
 
                 if (!isWaitingOk) {
@@ -299,4 +310,165 @@ class TimerService : Service() {
             }
             val effect = VibrationEffect.createOneShot(450L, VibrationEffect.DEFAULT_AMPLITUDE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val attrs = VibrationAttributes
+                val attrs = VibrationAttributes.Builder()
+                    .setUsage(VibrationAttributes.USAGE_ALARM)
+                    .build()
+                vibrator.vibrate(effect, attrs)
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(effect)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun blinkTorch() {
+        withContext(Dispatchers.IO) {
+            try {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return@withContext
+                cameraManager.setTorchMode(cameraId, true)
+                delay(250L)
+                cameraManager.setTorchMode(cameraId, false)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun setTorchOffSafe() {
+        try {
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
+            cameraManager.setTorchMode(cameraId, false)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun wakeScreenBriefly() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "LoopTimer:AlertWakeLock"
+            )
+            wl.acquire(3_000L)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LoopTimer:ServiceWakeLock").apply {
+                acquire(12 * 60 * 60 * 1000L)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {
+        } finally {
+            wakeLock = null
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                Strings.get(settings.language, "channel_name"),
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(remainingMs: Long): Notification {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val stopIntent = Intent(this, TimerService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val okIntent = Intent(this, TimerService::class.java).apply {
+            action = ACTION_OK
+        }
+        val okPendingIntent = PendingIntent.getService(
+            this,
+            2,
+            okIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val totalSeconds = ((remainingMs + 999L) / 1000L).coerceAtLeast(0L)
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        val formattedTime = if (hours > 0L) {
+            String.format("%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format("%02d:%02d", minutes, seconds)
+        }
+
+        val contentText = if (isWaitingOk) {
+            "${Strings.get(settings.language, "waiting_ok")} • #${currentLap}"
+        } else {
+            "$formattedTime • #${currentLap}"
+        }
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_3d_fg)
+            .setContentTitle(Strings.get(settings.language, "app_name"))
+            .setContentText(contentText)
+            .setContentIntent(openPendingIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+
+        if (isWaitingOk) {
+            builder.addAction(0, Strings.get(settings.language, "ok"), okPendingIntent)
+        }
+        builder.addAction(0, Strings.get(settings.language, "stop"), stopPendingIntent)
+
+        return builder.build()
+    }
+
+    private fun updateNotification(remainingMs: Long) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildNotification(remainingMs))
+    }
+
+    companion object {
+        const val ACTION_START = "com.example.looptimer.action.START"
+        const val ACTION_OK = "com.example.looptimer.action.OK"
+        const val ACTION_STOP = "com.example.looptimer.action.STOP"
+        const val EXTRA_INTERVAL_MS = "com.example.looptimer.extra.INTERVAL_MS"
+
+        const val CHANNEL_ID = "looptimer_channel"
+        const val NOTIFICATION_ID = 1001
+
+        private val _state = MutableStateFlow(TimerUiState())
+        val state: StateFlow<TimerUiState> = _state.asStateFlow()
+    }
+}
