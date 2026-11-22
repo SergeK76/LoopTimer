@@ -1,5 +1,6 @@
 package com.example.looptimer
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,17 +16,26 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 data class TimerUiState(
     val isRunning: Boolean = false,
-    val isAlerting: Boolean = false,
+    val isWaitingOk: Boolean = false,
     val remainingMillis: Long = 0L,
     val totalIntervalMillis: Long = 0L,
     val lapCount: Int = 1,
@@ -37,7 +47,7 @@ class TimerService : Service() {
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
-        const val ACTION_MUTE = "ACTION_MUTE"
+        const val ACTION_OK = "ACTION_OK"
         const val EXTRA_INTERVAL_MS = "EXTRA_INTERVAL_MS"
         private const val CHANNEL_ID = "loop_timer_channel"
         private const val NOTIFICATION_ID = 101
@@ -52,6 +62,11 @@ class TimerService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var mediaPlayer: MediaPlayer? = null
 
+    private var currentIntervalMs: Long = 60_000L
+    private var loopStartTime: Long = 0L
+    private var lapStartTime: Long = 0L
+    private var currentLap: Int = 1
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -64,67 +79,95 @@ class TimerService : Service() {
             ACTION_START -> {
                 val intervalMs = intent.getLongExtra(EXTRA_INTERVAL_MS, 60_000L)
                 if (intervalMs > 0) {
-                    startLoop(intervalMs)
+                    startTimer(intervalMs)
                 }
             }
-            ACTION_MUTE -> {
-                muteAlert()
+            ACTION_OK -> {
+                confirmOkAndStartNextLap()
             }
             ACTION_STOP -> {
-                stopLoop()
+                stopTimer()
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startLoop(intervalMs: Long) {
+    private fun startTimer(intervalMs: Long) {
         timerJob?.cancel()
         alertJob?.cancel()
         stopAlerts()
         acquireWakeLock()
 
-        val startTime = SystemClock.elapsedRealtime()
-        var currentLap = 1
-        var lapStartTime = startTime
+        currentIntervalMs = intervalMs
+        val now = SystemClock.elapsedRealtime()
+        loopStartTime = now
+        lapStartTime = now
+        currentLap = 1
 
-        startForeground(NOTIFICATION_ID, buildNotification(intervalMs, currentLap, isAlerting = false))
+        _state.value = TimerUiState(
+            isRunning = true,
+            isWaitingOk = false,
+            remainingMillis = intervalMs,
+            totalIntervalMillis = intervalMs,
+            lapCount = currentLap,
+            totalElapsedMillis = 0L
+        )
 
+        startForeground(NOTIFICATION_ID, buildNotification(intervalMs, currentLap, isWaitingOk = false))
+        launchCountdownLoop()
+    }
+
+    private fun launchCountdownLoop() {
+        timerJob?.cancel()
         timerJob = serviceScope.launch {
             var lastNotificationSecond = -1L
 
             while (isActive) {
                 val now = SystemClock.elapsedRealtime()
-                val elapsedInLap = now - lapStartTime
-                val remaining = intervalMs - elapsedInLap
+                val totalElapsed = now - loopStartTime
 
-                if (remaining <= 0L) {
-                    val overshoot = -remaining
-                    lapStartTime = now - (overshoot % intervalMs)
-                    currentLap++
-                    startLoopingAlert()
+                if (_state.value.isWaitingOk) {
+                    _state.value = _state.value.copy(
+                        isRunning = true,
+                        isWaitingOk = true,
+                        remainingMillis = 0L,
+                        totalElapsedMillis = totalElapsed
+                    )
+                    if (lastNotificationSecond != -2L) {
+                        lastNotificationSecond = -2L
+                        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        manager.notify(
+                            NOTIFICATION_ID,
+                            buildNotification(0L, currentLap, isWaitingOk = true)
+                        )
+                    }
+                    delay(150L)
+                    continue
                 }
 
-                val updatedRemaining = (intervalMs - (SystemClock.elapsedRealtime() - lapStartTime)).coerceAtLeast(0L)
-                val totalElapsed = SystemClock.elapsedRealtime() - startTime
-                val alertingNow = _state.value.isAlerting
-
+                val remaining = (currentIntervalMs - (now - lapStartTime)).coerceAtLeast(0L)
                 _state.value = TimerUiState(
                     isRunning = true,
-                    isAlerting = alertingNow,
-                    remainingMillis = updatedRemaining,
-                    totalIntervalMillis = intervalMs,
+                    isWaitingOk = false,
+                    remainingMillis = remaining,
+                    totalIntervalMillis = currentIntervalMs,
                     lapCount = currentLap,
                     totalElapsedMillis = totalElapsed
                 )
 
-                val currentSec = updatedRemaining / 1000L
+                val currentSec = (remaining + 999L) / 1000L
                 if (currentSec != lastNotificationSecond) {
                     lastNotificationSecond = currentSec
                     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     manager.notify(
                         NOTIFICATION_ID,
-                        buildNotification(updatedRemaining, currentLap, alertingNow)
+                        buildNotification(remaining, currentLap, isWaitingOk = false)
                     )
+                }
+
+                if (remaining <= 0L) {
+                    enterWaitingOkState()
+                    break
                 }
 
                 delay(100L)
@@ -132,37 +175,92 @@ class TimerService : Service() {
         }
     }
 
-    private fun muteAlert() {
-        alertJob?.cancel()
-        stopAlerts()
-        val current = _state.value
-        _state.value = current.copy(isAlerting = false)
-        if (current.isRunning) {
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.notify(
-                NOTIFICATION_ID,
-                buildNotification(current.remainingMillis, current.lapCount, isAlerting = false)
-            )
+    private fun enterWaitingOkState() {
+        val settings = SettingsManager(this)
+        _state.value = _state.value.copy(
+            isRunning = true,
+            isWaitingOk = true,
+            remainingMillis = 0L,
+            totalElapsedMillis = SystemClock.elapsedRealtime() - loopStartTime
+        )
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification(0L, currentLap, isWaitingOk = true))
+
+        if (settings.wakeOnAlert) {
+            wakeScreenAndOpenApp()
         }
+
+        startLoopingAlert(settings)
     }
 
-    private fun stopLoop() {
+    private fun confirmOkAndStartNextLap() {
+        alertJob?.cancel()
+        stopAlerts()
+
+        if (!_state.value.isRunning) return
+
+        currentLap++
+        val now = SystemClock.elapsedRealtime()
+        lapStartTime = now
+
+        _state.value = TimerUiState(
+            isRunning = true,
+            isWaitingOk = false,
+            remainingMillis = currentIntervalMs,
+            totalIntervalMillis = currentIntervalMs,
+            lapCount = currentLap,
+            totalElapsedMillis = now - loopStartTime
+        )
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(currentIntervalMs, currentLap, isWaitingOk = false)
+        )
+        launchCountdownLoop()
+    }
+
+    private fun stopTimer() {
         timerJob?.cancel()
         alertJob?.cancel()
         stopAlerts()
         releaseWakeLock()
-        _state.value = TimerUiState(isRunning = false, isAlerting = false)
+        _state.value = TimerUiState(isRunning = false, isWaitingOk = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun startLoopingAlert() {
-        val settings = SettingsManager(this)
+    private fun wakeScreenAndOpenApp() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val screenWake = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "LoopTimer::ScreenWake"
+            )
+            screenWake.acquire(5000L)
+        } catch (_: Exception) { }
+
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val isForeground = am.runningAppProcesses?.any {
+                it.processName == packageName &&
+                    it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            } == true
+
+            if (!isForeground) {
+                val intent = Intent(this, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+                startActivity(intent)
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun startLoopingAlert(settings: SettingsManager) {
         alertJob?.cancel()
         stopAlerts()
-
-        val currentState = _state.value
-        _state.value = currentState.copy(isAlerting = true)
 
         alertJob = serviceScope.launch {
             settings.ringtoneUri?.let { uriStr ->
@@ -185,168 +283,3 @@ class TimerService : Service() {
 
     private fun startLoopingSound(uri: Uri) {
         try {
-            val player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                setDataSource(applicationContext, uri)
-                isLooping = true
-                prepare()
-                start()
-            }
-            mediaPlayer = player
-        } catch (_: Exception) {
-            stopSound()
-        }
-    }
-
-    private suspend fun loopVibration() {
-        try {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vm.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-            val effect = VibrationEffect.createOneShot(350L, VibrationEffect.DEFAULT_AMPLITUDE)
-            while (currentCoroutineContext().isActive && _state.value.isAlerting) {
-                vibrator.vibrate(effect)
-                delay(1200L)
-            }
-        } catch (_: Exception) { }
-    }
-
-    private suspend fun loopFlash() {
-        try {
-            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
-            while (currentCoroutineContext().isActive && _state.value.isAlerting) {
-                cameraManager.setTorchMode(cameraId, true)
-                delay(180L)
-                cameraManager.setTorchMode(cameraId, false)
-                delay(1020L)
-            }
-        } catch (_: Exception) { } finally {
-            try {
-                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-                val cameraId = cameraManager.cameraIdList.firstOrNull()
-                if (cameraId != null) {
-                    cameraManager.setTorchMode(cameraId, false)
-                }
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun stopSound() {
-        try {
-            mediaPlayer?.let { mp ->
-                if (mp.isPlaying) {
-                    mp.stop()
-                }
-                mp.release()
-            }
-        } catch (_: Exception) { } finally {
-            mediaPlayer = null
-        }
-    }
-
-    private fun stopAlerts() {
-        stopSound()
-        try {
-            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList.firstOrNull()
-            if (cameraId != null) {
-                cameraManager.setTorchMode(cameraId, false)
-            }
-        } catch (_: Exception) { }
-    }
-
-    private fun acquireWakeLock() {
-        if (wakeLock == null) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LoopTimer::WakeLock")
-        }
-        if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(12 * 60 * 60 * 1000L)
-        }
-    }
-
-    private fun releaseWakeLock() {
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (_: Exception) { }
-    }
-
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Активный циклический таймер",
-            NotificationManager.IMPORTANCE_LOW
-        )
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
-    }
-
-    private fun buildNotification(remainingMs: Long, lap: Int, isAlerting: Boolean): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val muteIntent = PendingIntent.getService(
-            this, 2,
-            Intent(this, TimerService::class.java).apply { action = ACTION_MUTE },
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val stopIntent = PendingIntent.getService(
-            this, 1,
-            Intent(this, TimerService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val formatted = formatDuration(remainingMs)
-        val title = if (isAlerting) {
-            "СИГНАЛ • Круг #$lap • Осталось: $formatted"
-        } else {
-            "Круг #$lap • Осталось: $formatted"
-        }
-
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText("Циклический таймер работает")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-            .setContentIntent(openIntent)
-            .setOnlyAlertOnce(true)
-            .setOngoing(true)
-
-        if (isAlerting) {
-            builder.addAction(android.R.drawable.ic_lock_silent_mode_off, "ОК / Мьют", muteIntent)
-        }
-        builder.addAction(android.R.drawable.ic_media_pause, "Стоп", stopIntent)
-
-        return builder.build()
-    }
-
-    override fun onDestroy() {
-        stopLoop()
-        serviceScope.cancel()
-        super.onDestroy()
-    }
-}
-
-fun formatDuration(millis: Long): String {
-    val totalSeconds = (millis + 999) / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        String.format("%02d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format("%02d:%02d", minutes, seconds)
-    }
-}
