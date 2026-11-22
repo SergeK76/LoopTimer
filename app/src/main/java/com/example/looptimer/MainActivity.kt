@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -74,9 +75,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -689,10 +692,10 @@ fun Orbit3DCountdown(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(236.dp),
+            .height(284.dp),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(220.dp)) {
+        Canvas(modifier = Modifier.size(264.dp)) {
             val w = size.width
             val h = size.height
             val cx = w / 2f
@@ -794,6 +797,8 @@ fun SoundBrowserSheet(
 ) {
     val context = LocalContext.current
     var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var previewRingtone by remember { mutableStateOf<Ringtone?>(null) }
+    var playingUri by remember { mutableStateOf<String?>(null) }
 
     val soundOptions = remember {
         val list = mutableListOf(
@@ -824,6 +829,13 @@ fun SoundBrowserSheet(
         list
     }
 
+    var selectedTitle by remember { mutableStateOf(currentTitle) }
+    var selectedUri by remember {
+        mutableStateOf(
+            if (currentTitle == "Без звука") null else settings.ringtoneUri
+        )
+    }
+
     fun stopPreview() {
         try {
             previewPlayer?.let { mp ->
@@ -836,11 +848,21 @@ fun SoundBrowserSheet(
         } finally {
             previewPlayer = null
         }
+        try {
+            previewRingtone?.stop()
+        } catch (_: Exception) {
+        } finally {
+            previewRingtone = null
+        }
+        playingUri = null
     }
 
     fun playPreview(uriString: String?) {
+        val wasSamePlaying = !uriString.isNullOrBlank() && playingUri == uriString
         stopPreview()
-        if (uriString.isNullOrBlank()) return
+        if (uriString.isNullOrBlank() || wasSamePlaying) return
+
+        val uri = Uri.parse(uriString)
         try {
             val mp = MediaPlayer().apply {
                 setAudioAttributes(
@@ -849,24 +871,50 @@ fun SoundBrowserSheet(
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
-                setDataSource(context, Uri.parse(uriString))
+                setDataSource(context, uri)
                 isLooping = false
+                setOnCompletionListener {
+                    playingUri = null
+                }
                 prepare()
                 start()
             }
             previewPlayer = mp
+            playingUri = uriString
         } catch (_: Exception) {
             stopPreview()
+            try {
+                val rt = RingtoneManager.getRingtone(context, uri)
+                if (rt != null) {
+                    rt.audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .build()
+                    rt.play()
+                    previewRingtone = rt
+                    playingUri = uriString
+                }
+            } catch (_: Exception) {
+                stopPreview()
+            }
         }
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        stopPreview()
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
             val fileName = resolveFileName(context, uri) ?: "Аудиофайл с устройства"
-            onSelected(fileName, uri.toString())
+            val uriStr = uri.toString()
+            selectedTitle = fileName
+            selectedUri = uriStr
+            playPreview(uriStr)
         }
     }
 
@@ -895,7 +943,7 @@ fun SoundBrowserSheet(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Нажми на сигнал для прослушивания и выбора",
+                text = "Нажми на мелодию, чтобы прослушать, затем нажми «Выбрать»",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -903,7 +951,7 @@ fun SoundBrowserSheet(
             OutlinedButton(
                 onClick = {
                     stopPreview()
-                    filePickerLauncher.launch("audio/*")
+                    filePickerLauncher.launch(arrayOf("audio/*"))
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp)
@@ -913,34 +961,124 @@ fun SoundBrowserSheet(
                 Text("Выбрать мелодию / файл с устройства")
             }
 
+            if (selectedUri != null && soundOptions.none { it.uriString == selectedUri }) {
+                val isPlayingCustom = playingUri == selectedUri
+                ListItem(
+                    headlineContent = { Text(selectedTitle, fontWeight = FontWeight.SemiBold) },
+                    supportingContent = { Text(if (isPlayingCustom) "Воспроизводится..." else "Файл с устройства") },
+                    leadingContent = {
+                        RadioButton(
+                            selected = true,
+                            onClick = { playPreview(selectedUri) }
+                        )
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { playPreview(selectedUri) }) {
+                            Icon(
+                                imageVector = if (isPlayingCustom) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                contentDescription = "Прослушать"
+                            )
+                        }
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier.clickable {
+                        playPreview(selectedUri)
+                    }
+                )
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(320.dp)
+                    .height(280.dp)
             ) {
                 items(soundOptions) { item ->
-                    val isSelected = item.title == currentTitle ||
-                        (item.uriString != null && item.uriString == settings.ringtoneUri)
+                    val isSelected = if (item.uriString == null) {
+                        selectedUri == null
+                    } else {
+                        item.uriString == selectedUri
+                    }
+                    val isPlayingThis = !item.uriString.isNullOrBlank() && playingUri == item.uriString
+
                     ListItem(
-                        headlineContent = { Text(item.title) },
+                        headlineContent = {
+                            Text(
+                                text = item.title,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        },
+                        supportingContent = if (isPlayingThis) {
+                            { Text("Воспроизводится...", color = MaterialTheme.colorScheme.primary) }
+                        } else {
+                            null
+                        },
                         leadingContent = {
-                            Icon(Icons.Default.Notifications, contentDescription = null)
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedTitle = item.title
+                                    selectedUri = item.uriString
+                                    playPreview(item.uriString)
+                                }
+                            )
                         },
                         trailingContent = {
-                            if (isSelected) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                            if (item.uriString != null) {
+                                IconButton(
+                                    onClick = {
+                                        selectedTitle = item.title
+                                        selectedUri = item.uriString
+                                        playPreview(item.uriString)
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                        contentDescription = "Прослушать",
+                                        tint = if (isPlayingThis)
+                                            MaterialTheme.colorScheme.primary
+                                        else
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         },
                         modifier = Modifier.clickable {
+                            selectedTitle = item.title
+                            selectedUri = item.uriString
                             playPreview(item.uriString)
-                            onSelected(item.title, item.uriString)
                         }
                     )
                     HorizontalDivider()
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        stopPreview()
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Отмена")
+                }
+                Button(
+                    onClick = {
+                        stopPreview()
+                        onSelected(selectedTitle, selectedUri)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Выбрать", fontWeight = FontWeight.Bold)
                 }
             }
         }
