@@ -78,7 +78,7 @@ class TimerService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val intervalMs = intent.getLongExtra(EXTRA_INTERVAL_MS, 60_000L)
-                if (intervalMs > 0) {
+                if (intervalMs > 0L) {
                     startTimer(intervalMs)
                 }
             }
@@ -146,7 +146,7 @@ class TimerService : Service() {
                 }
 
                 val remaining = (currentIntervalMs - (now - lapStartTime)).coerceAtLeast(0L)
-                _state.value = TimerUiState(
+                _state.value = _state.value.copy(
                     isRunning = true,
                     isWaitingOk = false,
                     remainingMillis = remaining,
@@ -240,7 +240,8 @@ class TimerService : Service() {
                 "LoopTimer::ScreenWake"
             )
             screenWake.acquire(5000L)
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
 
         try {
             val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -255,7 +256,8 @@ class TimerService : Service() {
                 }
                 startActivity(intent)
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
     }
 
     private fun startLoopingAlert(settings: SettingsManager) {
@@ -283,3 +285,186 @@ class TimerService : Service() {
 
     private fun startLoopingSound(uri: Uri) {
         try {
+            val player = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(applicationContext, uri)
+                isLooping = true
+                prepare()
+                start()
+            }
+            mediaPlayer = player
+        } catch (_: Exception) {
+            stopSound()
+        }
+    }
+
+    private suspend fun loopVibration() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            val effect = VibrationEffect.createOneShot(350L, VibrationEffect.DEFAULT_AMPLITUDE)
+            while (currentCoroutineContext().isActive && _state.value.isWaitingOk) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val attrs = VibrationAttributes.Builder()
+                        .setUsage(VibrationAttributes.USAGE_ALARM)
+                        .build()
+                    vibrator.vibrate(effect, attrs)
+                } else {
+                    @Suppress("DEPRECATION")
+                    val audioAttrs = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .build()
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(effect, audioAttrs)
+                }
+                delay(1100L)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun loopFlash() {
+        try {
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
+            while (currentCoroutineContext().isActive && _state.value.isWaitingOk) {
+                cameraManager.setTorchMode(cameraId, true)
+                delay(180L)
+                cameraManager.setTorchMode(cameraId, false)
+                delay(920L)
+            }
+        } catch (_: Exception) {
+        } finally {
+            turnOffFlashSafely()
+        }
+    }
+
+    private fun turnOffFlashSafely() {
+        try {
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull()
+            if (cameraId != null) {
+                cameraManager.setTorchMode(cameraId, false)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun stopSound() {
+        try {
+            mediaPlayer?.let { mp ->
+                if (mp.isPlaying) {
+                    mp.stop()
+                }
+                mp.release()
+            }
+        } catch (_: Exception) {
+        } finally {
+            mediaPlayer = null
+        }
+    }
+
+    private fun stopAlerts() {
+        stopSound()
+        turnOffFlashSafely()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LoopTimer::WakeLock")
+        }
+        if (wakeLock?.isHeld == false) {
+            wakeLock?.acquire(12 * 60 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Активный циклический таймер",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun buildNotification(remainingMs: Long, lap: Int, isWaitingOk: Boolean): Notification {
+        val openIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val okIntent = PendingIntent.getService(
+            this, 2,
+            Intent(this, TimerService::class.java).apply { action = ACTION_OK },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, TimerService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val formatted = formatDuration(remainingMs)
+        val title = if (isWaitingOk) {
+            "ВРЕМЯ ВЫШЛО • Круг #$lap • Нажми ОК"
+        } else {
+            "Круг #$lap • Осталось: $formatted"
+        }
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(
+                if (isWaitingOk) "Ожидание нажатия ОК для запуска следующего круга"
+                else "Циклический таймер работает"
+            )
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentIntent(openIntent)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+
+        if (isWaitingOk) {
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "ОК", okIntent)
+        }
+        builder.addAction(android.R.drawable.ic_media_pause, "Стоп", stopIntent)
+
+        return builder.build()
+    }
+
+    override fun onDestroy() {
+        stopTimer()
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+}
+
+fun formatDuration(millis: Long): String {
+    val totalSeconds = (millis + 999) / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
+}
