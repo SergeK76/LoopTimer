@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Объёмная тень под 3D-хронометром -->
+    <path android:pathData="M54,28 A28,28 0 1,1 53.99,28 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="62"
+                android:gradientRadius="34">
+                <item android:offset="0.0" android:color="#88000000" />
+                <item android:offset="1.0" android:color="#00000000" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Верхняя кнопка хронометра с объёмным скосом -->
+    <path android:pathData="M48,18 L60,18 L62,25 L46,25 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="46"
+                android:startY="18"
+                android:endX="62"
+                android:endY="25">
+                <item android:offset="0.0" android:color="#FF7DD3FC" />
+                <item android:offset="1.0" android:color="#FF0284C7" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Внешнее 3D-кольцо корпуса -->
+    <path android:pathData="M54,24 A30,30 0 1,1 53.99,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="28"
+                android:startY="26"
+                android:endX="80"
+                android:endY="84">
+                <item android:offset="0.0" android:color="#FF38BDF8" />
+                <item android:offset="0.5" android:color="#FF2563EB" />
+                <item android:offset="1.0" android:color="#FF1E3A8A" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Внутренний тёмный циферблат -->
+    <path android:pathData="M54,30 A24,24 0 1,1 53.99,30 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="34"
+                android:startY="32"
+                android:endX="74"
+                android:endY="76">
+                <item android:offset="0.0" android:color="#FF1E293B" />
+                <item android:offset="1.0" android:color="#FF090D16" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Дуга цикла / прогресса -->
+    <path
+        android:pathData="M54,36 A18,18 0 1,1 36,54"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="36"
+                android:endX="36"
+                android:endY="54">
+                <item android:offset="0.0" android:color="#FF34D399" />
+                <item android:offset="1.0" android:color="#FF38BDF8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Стрелки таймера -->
+    <path
+        android:pathData="M54,54 L54,41 M54,54 L64,59"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFF8FAFC"
+        android:fillColor="#00000000" />
+
+    <!-- Центральный объёмный шарнир -->
+    <path
+        android:pathData="M54,50.5 A3.5,3.5 0 1,1 53.99,50.5 Z"
+        android:fillColor="#FF34D399" />
+
+    <!-- Верхний глянцевый блик поверх стекла -->
+    <path android:pathData="M34,37 C42,31 66,31 74,37 C66,41 42,41 34,37 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="32"
+                android:endX="54"
+                android:endY="41">
+                <item android:offset="0.0" android:color="#55FFFFFF" />
+                <item android:offset="1.0" android:color="#00FFFFFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
