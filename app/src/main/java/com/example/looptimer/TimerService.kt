@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -322,11 +323,22 @@ class TimerService : Service() {
         }
     }
 
+    private fun findFlashCameraId(cameraManager: CameraManager): String? {
+        return cameraManager.cameraIdList.firstOrNull { id ->
+            try {
+                cameraManager.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } catch (_: Exception) {
+                false
+            }
+        } ?: cameraManager.cameraIdList.firstOrNull()
+    }
+
     private suspend fun blinkTorch() {
         withContext(Dispatchers.IO) {
             try {
                 val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-                val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return@withContext
+                val cameraId = findFlashCameraId(cameraManager) ?: return@withContext
                 cameraManager.setTorchMode(cameraId, true)
                 delay(250L)
                 cameraManager.setTorchMode(cameraId, false)
@@ -338,7 +350,7 @@ class TimerService : Service() {
     private fun setTorchOffSafe() {
         try {
             val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
+            val cameraId = findFlashCameraId(cameraManager) ?: return
             cameraManager.setTorchMode(cameraId, false)
         } catch (_: Exception) {
         }
