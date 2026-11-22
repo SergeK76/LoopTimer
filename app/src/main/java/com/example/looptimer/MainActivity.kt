@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -239,23 +240,16 @@ fun LoopTimerScreen(
             withContext(Dispatchers.IO) {
                 try {
                     val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-                    val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return@withContext
+                    val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                        cameraManager.getCameraCharacteristics(id)
+                            .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                    } ?: return@withContext
                     cameraManager.setTorchMode(cameraId, true)
                     delay(140L)
                     cameraManager.setTorchMode(cameraId, false)
                 } catch (_: Exception) {
                 }
             }
-        }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        flashEnabled = granted
-        settings.flashEnabled = granted
-        if (granted) {
-            triggerTestBlink()
         }
     }
 
@@ -614,20 +608,10 @@ fun LoopTimerScreen(
                                 Switch(
                                     checked = flashEnabled,
                                     onCheckedChange = { enabled ->
+                                        flashEnabled = enabled
+                                        settings.flashEnabled = enabled
                                         if (enabled) {
-                                            if (ContextCompat.checkSelfPermission(
-                                                    context, Manifest.permission.CAMERA
-                                                ) != PackageManager.PERMISSION_GRANTED
-                                            ) {
-                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                            } else {
-                                                flashEnabled = true
-                                                settings.flashEnabled = true
-                                                triggerTestBlink()
-                                            }
-                                        } else {
-                                            flashEnabled = false
-                                            settings.flashEnabled = false
+                                            triggerTestBlink()
                                         }
                                     }
                                 )
