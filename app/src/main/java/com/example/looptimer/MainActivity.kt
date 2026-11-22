@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
@@ -69,6 +70,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -135,6 +138,7 @@ class MainActivity : ComponentActivity() {
             var isDarkTheme by remember { mutableStateOf(settings.isDarkTheme) }
             var keepScreenOn by remember { mutableStateOf(settings.keepScreenOn) }
             var wakeOnAlert by remember { mutableStateOf(settings.wakeOnAlert) }
+            var currentLanguage by remember { mutableStateOf(settings.language) }
 
             LaunchedEffect(keepScreenOn) {
                 if (keepScreenOn) {
@@ -146,29 +150,36 @@ class MainActivity : ComponentActivity() {
 
             val colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
 
-            MaterialTheme(colorScheme = colorScheme) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    LoopTimerScreen(
-                        settings = settings,
-                        isDarkTheme = isDarkTheme,
-                        onThemeToggle = {
-                            isDarkTheme = it
-                            settings.isDarkTheme = it
-                        },
-                        keepScreenOn = keepScreenOn,
-                        onKeepScreenOnToggle = {
-                            keepScreenOn = it
-                            settings.keepScreenOn = it
-                        },
-                        wakeOnAlert = wakeOnAlert,
-                        onWakeOnAlertToggle = {
-                            wakeOnAlert = it
-                            settings.wakeOnAlert = it
-                        }
-                    )
+            ProvideAppStrings(language = currentLanguage) {
+                MaterialTheme(colorScheme = colorScheme) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        LoopTimerScreen(
+                            settings = settings,
+                            currentLanguage = currentLanguage,
+                            onLanguageChange = { lang ->
+                                currentLanguage = lang
+                                settings.language = lang
+                            },
+                            isDarkTheme = isDarkTheme,
+                            onThemeToggle = {
+                                isDarkTheme = it
+                                settings.isDarkTheme = it
+                            },
+                            keepScreenOn = keepScreenOn,
+                            onKeepScreenOnToggle = {
+                                keepScreenOn = it
+                                settings.keepScreenOn = it
+                            },
+                            wakeOnAlert = wakeOnAlert,
+                            onWakeOnAlertToggle = {
+                                wakeOnAlert = it
+                                settings.wakeOnAlert = it
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -179,6 +190,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LoopTimerScreen(
     settings: SettingsManager,
+    currentLanguage: AppLanguage,
+    onLanguageChange: (AppLanguage) -> Unit,
     isDarkTheme: Boolean,
     onThemeToggle: (Boolean) -> Unit,
     keepScreenOn: Boolean,
@@ -188,6 +201,7 @@ fun LoopTimerScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val strings = LocalAppStrings.current
     val timerState by TimerService.state.collectAsState()
 
     var hours by remember { mutableIntStateOf(settings.hours) }
@@ -197,9 +211,14 @@ fun LoopTimerScreen(
     var vibrateEnabled by remember { mutableStateOf(settings.vibrateEnabled) }
     var flashEnabled by remember { mutableStateOf(settings.flashEnabled) }
     var displayMode by remember { mutableStateOf(settings.displayMode) }
-    var ringtoneTitle by remember { mutableStateOf(settings.getRingtoneTitle(context)) }
+    var ringtoneTitle by remember { mutableStateOf(settings.getRingtoneTitle(context, strings)) }
     var showSoundSheet by remember { mutableStateOf(false) }
     var showStopDialog by remember { mutableStateOf(false) }
+    var showLanguageMenu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentLanguage, settings.ringtoneUri, settings.customRingtoneTitle) {
+        ringtoneTitle = settings.getRingtoneTitle(context, strings)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -257,7 +276,7 @@ fun LoopTimerScreen(
                     IconButton(onClick = { onThemeToggle(!isDarkTheme) }) {
                         Icon(
                             imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Сменить тему"
+                            contentDescription = strings.changeTheme
                         )
                     }
                 }
@@ -280,10 +299,10 @@ fun LoopTimerScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    PresetChip(label = "15м", modifier = Modifier.weight(1f)) { applyTime(0, 15, 0) }
-                    PresetChip(label = "30м", modifier = Modifier.weight(1f)) { applyTime(0, 30, 0) }
-                    PresetChip(label = "45м", modifier = Modifier.weight(1f)) { applyTime(0, 45, 0) }
-                    PresetChip(label = "1ч", modifier = Modifier.weight(1f)) { applyTime(1, 0, 0) }
+                    PresetChip(label = "15m", modifier = Modifier.weight(1f)) { applyTime(0, 15, 0) }
+                    PresetChip(label = "30m", modifier = Modifier.weight(1f)) { applyTime(0, 30, 0) }
+                    PresetChip(label = "45m", modifier = Modifier.weight(1f)) { applyTime(0, 45, 0) }
+                    PresetChip(label = "1h", modifier = Modifier.weight(1f)) { applyTime(1, 0, 0) }
                 }
             }
 
@@ -307,23 +326,22 @@ fun LoopTimerScreen(
                         } else {
                             0f
                         }
+                        val lapLabel = if (timerState.isWaitingOk) {
+                            "${strings.waitingOkPrefix}${timerState.lapCount}"
+                        } else {
+                            "${strings.lapPrefix}${timerState.lapCount}"
+                        }
 
                         if (displayMode == DisplayMode.ORBIT_3D) {
                             Orbit3DCountdown(
                                 remainingText = formatDuration(timerState.remainingMillis),
-                                lapText = if (timerState.isWaitingOk)
-                                    "ЖДЁТ ОК • КРУГ #${timerState.lapCount}"
-                                else
-                                    "КРУГ #${timerState.lapCount}",
+                                lapText = lapLabel,
                                 progress = progress,
                                 isWaitingOk = timerState.isWaitingOk
                             )
                         } else {
                             Text(
-                                text = if (timerState.isWaitingOk)
-                                    "ЖДЁТ ОК • КРУГ #${timerState.lapCount}"
-                                else
-                                    "КРУГ #${timerState.lapCount}",
+                                text = lapLabel,
                                 style = MaterialTheme.typography.labelLarge,
                                 color = if (timerState.isWaitingOk)
                                     MaterialTheme.colorScheme.error
@@ -342,7 +360,7 @@ fun LoopTimerScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Общее время: ${formatDuration(timerState.totalElapsedMillis)}",
+                            text = "${strings.totalElapsed}: ${formatDuration(timerState.totalElapsedMillis)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -353,7 +371,7 @@ fun LoopTimerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             WheelPickerColumn(
-                                label = "Часы",
+                                label = strings.hours,
                                 value = hours,
                                 range = 0..23,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
@@ -364,7 +382,7 @@ fun LoopTimerScreen(
                             )
                             Text(":", fontSize = 32.sp, fontWeight = FontWeight.Bold)
                             WheelPickerColumn(
-                                label = "Мин",
+                                label = strings.minutes,
                                 value = minutes,
                                 range = 0..59,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
@@ -375,7 +393,7 @@ fun LoopTimerScreen(
                             )
                             Text(":", fontSize = 32.sp, fontWeight = FontWeight.Bold)
                             WheelPickerColumn(
-                                label = "Сек",
+                                label = strings.seconds,
                                 value = seconds,
                                 range = 0..59,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
@@ -414,7 +432,7 @@ fun LoopTimerScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "ОК",
+                        text = strings.okButton,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -433,7 +451,7 @@ fun LoopTimerScreen(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Стоп", fontWeight = FontWeight.SemiBold)
+                    Text(strings.stopButton, fontWeight = FontWeight.SemiBold)
                 }
             } else {
                 Button(
@@ -467,7 +485,7 @@ fun LoopTimerScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (timerState.isRunning) "СТОП" else "СТАРТ",
+                        text = if (timerState.isRunning) strings.stopButton else strings.startButton,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -484,14 +502,51 @@ fun LoopTimerScreen(
                     shape = RoundedCornerShape(20.dp)
                 ) {
                     Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Box {
+                            ListItem(
+                                headlineContent = { Text(strings.languageLabel) },
+                                supportingContent = { Text(currentLanguage.nativeName) },
+                                leadingContent = {
+                                    Icon(Icons.Default.Language, contentDescription = null)
+                                },
+                                trailingContent = {
+                                    Icon(Icons.Default.ChevronRight, contentDescription = null)
+                                },
+                                modifier = Modifier.clickable {
+                                    showLanguageMenu = true
+                                }
+                            )
+                            DropdownMenu(
+                                expanded = showLanguageMenu,
+                                onDismissRequest = { showLanguageMenu = false }
+                            ) {
+                                AppLanguage.entries.forEach { lang ->
+                                    DropdownMenuItem(
+                                        text = { Text(lang.nativeName) },
+                                        trailingIcon = {
+                                            if (lang == currentLanguage) {
+                                                Icon(Icons.Default.Check, contentDescription = null)
+                                            }
+                                        },
+                                        onClick = {
+                                            showLanguageMenu = false
+                                            onLanguageChange(lang)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
                         ListItem(
-                            headlineContent = { Text("Анимация отсчёта") },
+                            headlineContent = { Text(strings.animationTitle) },
                             supportingContent = {
                                 Text(
                                     if (displayMode == DisplayMode.ORBIT_3D)
-                                        "3D-орбита с объёмом"
+                                        strings.animationOrbit3d
                                     else
-                                        "Классические цифры"
+                                        strings.animationClassic
                                 )
                             },
                             leadingContent = {
@@ -512,7 +567,7 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = { Text("Мелодия сигнала") },
+                            headlineContent = { Text(strings.soundTitle) },
                             supportingContent = { Text(ringtoneTitle) },
                             leadingContent = {
                                 Icon(Icons.Default.Notifications, contentDescription = null)
@@ -528,8 +583,8 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = { Text("Вибрация") },
-                            supportingContent = { Text("При включении — проверочный сигнал") },
+                            headlineContent = { Text(strings.vibrateTitle) },
+                            supportingContent = { Text(strings.vibrateSubtitle) },
                             leadingContent = {
                                 Icon(Icons.Default.Settings, contentDescription = null)
                             },
@@ -550,8 +605,8 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = { Text("Моргание вспышкой") },
-                            supportingContent = { Text("При включении — короткий блинк") },
+                            headlineContent = { Text(strings.flashTitle) },
+                            supportingContent = { Text(strings.flashSubtitle) },
                             leadingContent = {
                                 Icon(Icons.Default.FlashlightOn, contentDescription = null)
                             },
@@ -582,8 +637,8 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = { Text("Зажигать экран при сигнале") },
-                            supportingContent = { Text("Чтобы сразу нажать ОК") },
+                            headlineContent = { Text(strings.wakeScreenTitle) },
+                            supportingContent = { Text(strings.wakeScreenSubtitle) },
                             leadingContent = {
                                 Icon(Icons.Default.Notifications, contentDescription = null)
                             },
@@ -598,8 +653,8 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = { Text("Не выключать экран") },
-                            supportingContent = { Text("Пока открыт экран приложения") },
+                            headlineContent = { Text(strings.keepScreenOnTitle) },
+                            supportingContent = { Text(strings.keepScreenOnSubtitle) },
                             leadingContent = {
                                 Icon(Icons.Default.Settings, contentDescription = null)
                             },
@@ -621,8 +676,8 @@ fun LoopTimerScreen(
     if (showStopDialog) {
         AlertDialog(
             onDismissRequest = { showStopDialog = false },
-            title = { Text("Остановить таймер?") },
-            text = { Text("Текущий отсчёт и счётчик кругов будут сброшены.") },
+            title = { Text(strings.stopDialogTitle) },
+            text = { Text(strings.stopDialogBody) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -633,12 +688,12 @@ fun LoopTimerScreen(
                         context.startService(stopIntent)
                     }
                 ) {
-                    Text("Стоп", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    Text(strings.stopButton, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showStopDialog = false }) {
-                    Text("Отмена")
+                    Text(strings.cancel)
                 }
             }
         )
@@ -796,13 +851,14 @@ fun SoundBrowserSheet(
     onSelected: (String, String?) -> Unit
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
     var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     var previewRingtone by remember { mutableStateOf<Ringtone?>(null) }
     var playingUri by remember { mutableStateOf<String?>(null) }
 
-    val soundOptions = remember {
+    val soundOptions = remember(strings) {
         val list = mutableListOf(
-            SoundOption(title = "Без звука", uriString = null)
+            SoundOption(title = strings.noSound, uriString = null)
         )
         val manager = RingtoneManager(context).apply {
             setType(
@@ -832,7 +888,7 @@ fun SoundBrowserSheet(
     var selectedTitle by remember { mutableStateOf(currentTitle) }
     var selectedUri by remember {
         mutableStateOf(
-            if (currentTitle == "Без звука") null else settings.ringtoneUri
+            if (currentTitle == strings.noSound) null else settings.ringtoneUri
         )
     }
 
@@ -910,7 +966,7 @@ fun SoundBrowserSheet(
                 )
             } catch (_: Exception) {
             }
-            val fileName = resolveFileName(context, uri) ?: "Аудиофайл с устройства"
+            val fileName = resolveFileName(context, uri) ?: strings.customAudioFile
             val uriStr = uri.toString()
             selectedTitle = fileName
             selectedUri = uriStr
@@ -938,12 +994,12 @@ fun SoundBrowserSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Выбор мелодии",
+                text = strings.soundSheetTitle,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Нажми на мелодию, чтобы прослушать, затем нажми «Выбрать»",
+                text = strings.soundSheetHint,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -958,14 +1014,16 @@ fun SoundBrowserSheet(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Выбрать мелодию / файл с устройства")
+                Text(strings.pickFromDevice)
             }
 
             if (selectedUri != null && soundOptions.none { it.uriString == selectedUri }) {
                 val isPlayingCustom = playingUri == selectedUri
                 ListItem(
                     headlineContent = { Text(selectedTitle, fontWeight = FontWeight.SemiBold) },
-                    supportingContent = { Text(if (isPlayingCustom) "Воспроизводится..." else "Файл с устройства") },
+                    supportingContent = {
+                        Text(if (isPlayingCustom) strings.playingNow else strings.customAudioFile)
+                    },
                     leadingContent = {
                         RadioButton(
                             selected = true,
@@ -976,7 +1034,7 @@ fun SoundBrowserSheet(
                         IconButton(onClick = { playPreview(selectedUri) }) {
                             Icon(
                                 imageVector = if (isPlayingCustom) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                contentDescription = "Прослушать"
+                                contentDescription = strings.previewAction
                             )
                         }
                     },
@@ -1010,7 +1068,7 @@ fun SoundBrowserSheet(
                             )
                         },
                         supportingContent = if (isPlayingThis) {
-                            { Text("Воспроизводится...", color = MaterialTheme.colorScheme.primary) }
+                            { Text(strings.playingNow, color = MaterialTheme.colorScheme.primary) }
                         } else {
                             null
                         },
@@ -1035,7 +1093,7 @@ fun SoundBrowserSheet(
                                 ) {
                                     Icon(
                                         imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                        contentDescription = "Прослушать",
+                                        contentDescription = strings.previewAction,
                                         tint = if (isPlayingThis)
                                             MaterialTheme.colorScheme.primary
                                         else
@@ -1066,7 +1124,7 @@ fun SoundBrowserSheet(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text("Отмена")
+                    Text(strings.cancel)
                 }
                 Button(
                     onClick = {
@@ -1078,7 +1136,7 @@ fun SoundBrowserSheet(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Выбрать", fontWeight = FontWeight.Bold)
+                    Text(strings.select, fontWeight = FontWeight.Bold)
                 }
             }
         }
