@@ -1,6 +1,7 @@
 package com.example.looptimer
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
@@ -51,20 +52,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ScreenLockPortrait
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.ThreeDRotation
-import androidx.compose.material.icons.filled.Vibration
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -218,12 +216,13 @@ fun LoopTimerScreen(
         scope.launch {
             withContext(Dispatchers.IO) {
                 try {
-                    val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as CameraManager
+                    val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
                     val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return@withContext
                     cameraManager.setTorchMode(cameraId, true)
                     delay(140L)
                     cameraManager.setTorchMode(cameraId, false)
-                } catch (_: Exception) { }
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -274,7 +273,6 @@ fun LoopTimerScreen(
             Spacer(modifier = Modifier.height(2.dp))
 
             if (!timerState.isRunning) {
-                // Быстрые пресеты времени
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -286,7 +284,6 @@ fun LoopTimerScreen(
                 }
             }
 
-            // Основной блок таймера / крутилок
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
@@ -357,9 +354,9 @@ fun LoopTimerScreen(
                                 value = hours,
                                 range = 0..23,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
-                                onValueChange = {
-                                    hours = it
-                                    settings.hours = it
+                                onValueChange = { newVal ->
+                                    hours = newVal
+                                    settings.hours = newVal
                                 }
                             )
                             Text(":", fontSize = 32.sp, fontWeight = FontWeight.Bold)
@@ -368,9 +365,9 @@ fun LoopTimerScreen(
                                 value = minutes,
                                 range = 0..59,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
-                                onValueChange = {
-                                    minutes = it
-                                    settings.minutes = it
+                                onValueChange = { newVal ->
+                                    minutes = newVal
+                                    settings.minutes = newVal
                                 }
                             )
                             Text(":", fontSize = 32.sp, fontWeight = FontWeight.Bold)
@@ -379,9 +376,9 @@ fun LoopTimerScreen(
                                 value = seconds,
                                 range = 0..59,
                                 textColor = MaterialTheme.colorScheme.onSurface.toArgb(),
-                                onValueChange = {
-                                    seconds = it
-                                    settings.seconds = it
+                                onValueChange = { newVal ->
+                                    seconds = newVal
+                                    settings.seconds = newVal
                                 }
                             )
                         }
@@ -389,7 +386,6 @@ fun LoopTimerScreen(
                 }
             }
 
-            // Кнопки управления: ОК (когда время вышло) или СТАРТ / СТОП
             val totalMillis = ((hours * 3600L) + (minutes * 60L) + seconds) * 1000L
 
             if (timerState.isRunning && timerState.isWaitingOk) {
@@ -441,7 +437,7 @@ fun LoopTimerScreen(
                     onClick = {
                         if (timerState.isRunning) {
                             showStopDialog = true
-                        } else if (totalMillis > 0) {
+                        } else if (totalMillis > 0L) {
                             val startIntent = Intent(context, TimerService::class.java).apply {
                                 action = TimerService.ACTION_START
                                 putExtra(TimerService.EXTRA_INTERVAL_MS, totalMillis)
@@ -449,7 +445,7 @@ fun LoopTimerScreen(
                             ContextCompat.startForegroundService(context, startIntent)
                         }
                     },
-                    enabled = timerState.isRunning || totalMillis > 0,
+                    enabled = timerState.isRunning || totalMillis > 0L,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(64.dp),
@@ -475,7 +471,6 @@ fun LoopTimerScreen(
                 }
             }
 
-            // Прячем опции ниже кнопки во время работы таймера
             AnimatedVisibility(
                 visible = !timerState.isRunning,
                 enter = expandVertically() + fadeIn(),
@@ -497,7 +492,7 @@ fun LoopTimerScreen(
                                 )
                             },
                             leadingContent = {
-                                Icon(Icons.Default.ThreeDRotation, contentDescription = null)
+                                Icon(Icons.Default.Refresh, contentDescription = null)
                             },
                             trailingContent = {
                                 Switch(
@@ -517,7 +512,7 @@ fun LoopTimerScreen(
                             headlineContent = { Text("Мелодия сигнала") },
                             supportingContent = { Text(ringtoneTitle) },
                             leadingContent = {
-                                Icon(Icons.Default.NotificationsActive, contentDescription = null)
+                                Icon(Icons.Default.Notifications, contentDescription = null)
                             },
                             trailingContent = {
                                 Icon(Icons.Default.ChevronRight, contentDescription = null)
@@ -530,4 +525,529 @@ fun LoopTimerScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
                         ListItem(
-                            headlineContent = {
+                            headlineContent = { Text("Вибрация") },
+                            supportingContent = { Text("При включении — проверочный сигнал") },
+                            leadingContent = {
+                                Icon(Icons.Default.Settings, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = vibrateEnabled,
+                                    onCheckedChange = { enabled ->
+                                        vibrateEnabled = enabled
+                                        settings.vibrateEnabled = enabled
+                                        if (enabled) {
+                                            vibrateTestPulse(context)
+                                        }
+                                    }
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                        ListItem(
+                            headlineContent = { Text("Моргание вспышкой") },
+                            supportingContent = { Text("При включении — короткий блинк") },
+                            leadingContent = {
+                                Icon(Icons.Default.FlashlightOn, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = flashEnabled,
+                                    onCheckedChange = { enabled ->
+                                        if (enabled) {
+                                            if (ContextCompat.checkSelfPermission(
+                                                    context, Manifest.permission.CAMERA
+                                                ) != PackageManager.PERMISSION_GRANTED
+                                            ) {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            } else {
+                                                flashEnabled = true
+                                                settings.flashEnabled = true
+                                                triggerTestBlink()
+                                            }
+                                        } else {
+                                            flashEnabled = false
+                                            settings.flashEnabled = false
+                                        }
+                                    }
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                        ListItem(
+                            headlineContent = { Text("Зажигать экран при сигнале") },
+                            supportingContent = { Text("Чтобы сразу нажать ОК") },
+                            leadingContent = {
+                                Icon(Icons.Default.Notifications, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = wakeOnAlert,
+                                    onCheckedChange = onWakeOnAlertToggle
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                        ListItem(
+                            headlineContent = { Text("Не выключать экран") },
+                            supportingContent = { Text("Пока открыт экран приложения") },
+                            leadingContent = {
+                                Icon(Icons.Default.Settings, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = keepScreenOn,
+                                    onCheckedChange = onKeepScreenOnToggle
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+
+    if (showStopDialog) {
+        AlertDialog(
+            onDismissRequest = { showStopDialog = false },
+            title = { Text("Остановить таймер?") },
+            text = { Text("Текущий отсчёт и счётчик кругов будут сброшены.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showStopDialog = false
+                        val stopIntent = Intent(context, TimerService::class.java).apply {
+                            action = TimerService.ACTION_STOP
+                        }
+                        context.startService(stopIntent)
+                    }
+                ) {
+                    Text("Стоп", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    if (showSoundSheet) {
+        SoundBrowserSheet(
+            settings = settings,
+            currentTitle = ringtoneTitle,
+            onDismiss = { showSoundSheet = false },
+            onSelected = { title, uriStr ->
+                settings.ringtoneUri = uriStr
+                settings.customRingtoneTitle = title
+                ringtoneTitle = title
+                showSoundSheet = false
+            }
+        )
+    }
+}
+
+@Composable
+fun Orbit3DCountdown(
+    remainingText: String,
+    lapText: String,
+    progress: Float,
+    isWaitingOk: Boolean
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "orbit3d")
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (isWaitingOk) 450 else 1600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+    val orbitAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 8000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "orbitAngle"
+    )
+
+    val primaryColor = if (isWaitingOk) Color(0xFFEF4444) else Color(0xFF38BDF8)
+    val secondaryColor = if (isWaitingOk) Color(0xFFF97316) else Color(0xFF34D399)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(236.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(220.dp)) {
+            val w = size.width
+            val h = size.height
+            val cx = w / 2f
+            val cy = h / 2f + 6f
+            val radius = (minOf(w, h) * 0.38f) * (if (isWaitingOk) pulse else 1f)
+
+            drawOval(
+                color = Color.Black.copy(alpha = 0.35f),
+                topLeft = Offset(cx - radius * 0.85f, cy + radius * 0.72f),
+                size = Size(radius * 1.7f, radius * 0.34f)
+            )
+
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        primaryColor.copy(alpha = 0.18f),
+                        Color(0xFF0F172A).copy(alpha = 0.85f),
+                        Color(0xFF020617).copy(alpha = 0.95f)
+                    ),
+                    center = Offset(cx - radius * 0.25f, cy - radius * 0.25f),
+                    radius = radius * 1.15f
+                ),
+                radius = radius,
+                center = Offset(cx, cy)
+            )
+
+            drawArc(
+                color = Color.White.copy(alpha = 0.12f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(cx - radius, cy - radius),
+                size = Size(radius * 2f, radius * 2f),
+                style = Stroke(width = 14f, cap = StrokeCap.Round)
+            )
+
+            drawArc(
+                brush = Brush.sweepGradient(
+                    colors = listOf(secondaryColor, primaryColor, secondaryColor)
+                ),
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                topLeft = Offset(cx - radius, cy - radius),
+                size = Size(radius * 2f, radius * 2f),
+                style = Stroke(width = 14f, cap = StrokeCap.Round)
+            )
+
+            rotate(degrees = -18f, pivot = Offset(cx, cy)) {
+                drawOval(
+                    color = primaryColor.copy(alpha = 0.35f),
+                    topLeft = Offset(cx - radius * 1.12f, cy - radius * 0.42f),
+                    size = Size(radius * 2.24f, radius * 0.84f),
+                    style = Stroke(width = 3f)
+                )
+
+                val rad = Math.toRadians(orbitAngle.toDouble())
+                val dotX = cx + (radius * 1.12f * cos(rad)).toFloat()
+                val dotY = cy + (radius * 0.42f * sin(rad)).toFloat()
+
+                drawCircle(
+                    color = Color.White,
+                    radius = 7f,
+                    center = Offset(dotX, dotY)
+                )
+                drawCircle(
+                    color = primaryColor.copy(alpha = 0.45f),
+                    radius = 14f,
+                    center = Offset(dotX, dotY)
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = lapText,
+                style = MaterialTheme.typography.labelSmall,
+                color = primaryColor,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = remainingText,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SoundBrowserSheet(
+    settings: SettingsManager,
+    currentTitle: String,
+    onDismiss: () -> Unit,
+    onSelected: (String, String?) -> Unit
+) {
+    val context = LocalContext.current
+    var previewPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    val soundOptions = remember {
+        val list = mutableListOf(
+            SoundOption(title = "Без звука", uriString = null)
+        )
+        val manager = RingtoneManager(context).apply {
+            setType(
+                RingtoneManager.TYPE_ALARM or
+                    RingtoneManager.TYPE_NOTIFICATION or
+                    RingtoneManager.TYPE_RINGTONE
+            )
+        }
+        val cursor = try {
+            manager.cursor
+        } catch (_: Exception) {
+            null
+        }
+        if (cursor != null && cursor.moveToFirst()) {
+            val seenUris = mutableSetOf<String>()
+            do {
+                val title = cursor.getString(RingtoneManager.TITLE_COLUMN_INDEX) ?: continue
+                val uri = manager.getRingtoneUri(cursor.position)?.toString() ?: continue
+                if (seenUris.add(uri)) {
+                    list.add(SoundOption(title = title, uriString = uri))
+                }
+            } while (cursor.moveToNext())
+        }
+        list
+    }
+
+    fun stopPreview() {
+        try {
+            previewPlayer?.let { mp ->
+                if (mp.isPlaying) {
+                    mp.stop()
+                }
+                mp.release()
+            }
+        } catch (_: Exception) {
+        } finally {
+            previewPlayer = null
+        }
+    }
+
+    fun playPreview(uriString: String?) {
+        stopPreview()
+        if (uriString.isNullOrBlank()) return
+        try {
+            val mp = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(context, Uri.parse(uriString))
+                isLooping = false
+                prepare()
+                start()
+            }
+            previewPlayer = mp
+        } catch (_: Exception) {
+            stopPreview()
+        }
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        stopPreview()
+        if (uri != null) {
+            val fileName = resolveFileName(context, uri) ?: "Аудиофайл с устройства"
+            onSelected(fileName, uri.toString())
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            stopPreview()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            stopPreview()
+            onDismiss()
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Выбор мелодии",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Нажми на сигнал для прослушивания и выбора",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(
+                onClick = {
+                    stopPreview()
+                    filePickerLauncher.launch("audio/*")
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Выбрать мелодию / файл с устройства")
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(320.dp)
+            ) {
+                items(soundOptions) { item ->
+                    val isSelected = item.title == currentTitle ||
+                        (item.uriString != null && item.uriString == settings.ringtoneUri)
+                    ListItem(
+                        headlineContent = { Text(item.title) },
+                        leadingContent = {
+                            Icon(Icons.Default.Notifications, contentDescription = null)
+                        },
+                        trailingContent = {
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
+                        modifier = Modifier.clickable {
+                            playPreview(item.uriString)
+                            onSelected(item.title, item.uriString)
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+private fun resolveFileName(context: Context, uri: Uri): String? {
+    return try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex >= 0 && cursor.moveToFirst()) {
+                cursor.getString(nameIndex)
+            } else {
+                null
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun vibrateTestPulse(context: Context) {
+    try {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        val effect = VibrationEffect.createOneShot(220L, VibrationEffect.DEFAULT_AMPLITUDE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val attrs = VibrationAttributes.Builder()
+                .setUsage(VibrationAttributes.USAGE_ALARM)
+                .build()
+            vibrator.vibrate(effect, attrs)
+        } else {
+            @Suppress("DEPRECATION")
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .build()
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(effect, audioAttrs)
+        }
+    } catch (_: Exception) {
+    }
+}
+
+@Composable
+fun PresetChip(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = false,
+        onClick = onClick,
+        label = {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(label, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun WheelPickerColumn(
+    label: String,
+    value: Int,
+    range: IntRange,
+    textColor: Int,
+    onValueChange: (Int) -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        AndroidView(
+            modifier = Modifier
+                .width(76.dp)
+                .height(140.dp),
+            factory = { ctx ->
+                NumberPicker(ctx).apply {
+                    minValue = range.first
+                    maxValue = range.last
+                    this.value = value
+                    setFormatter { itemValue -> String.format("%02d", itemValue) }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        this.textColor = textColor
+                        this.textSize = 68f
+                    }
+                    setOnValueChangedListener { _, _, newVal ->
+                        onValueChange(newVal)
+                    }
+                }
+            },
+            update = { picker ->
+                if (picker.value != value) {
+                    picker.value = value
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    picker.textColor = textColor
+                }
+            }
+        )
+    }
+}
