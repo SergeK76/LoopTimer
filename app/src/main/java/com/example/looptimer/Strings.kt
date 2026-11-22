@@ -444,3 +444,18 @@ fun ProvideAppStrings(language: AppLanguage, content: @Composable () -> Unit) {
         content = content
     )
 }
+
+object Strings {
+    fun get(language: AppLanguage, key: String): String {
+        val s = stringsFor(language)
+        return when (key) {
+            "channel_name" -> s.notifChannelName
+            "waiting_ok" -> s.notifWaitingText
+            "running_text" -> s.notifRunningText
+            "app_name" -> "LoopTimer"
+            "ok" -> s.okButton
+            "stop" -> s.stopButton
+            else -> ""
+        }
+    }
+}
