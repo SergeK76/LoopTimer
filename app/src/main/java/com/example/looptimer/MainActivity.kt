@@ -1,30 +1,111 @@
 package com.example.looptimer
 
 import android.Manifest
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationAttributes
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.provider.OpenableColumns
 import android.view.WindowManager
 import android.widget.NumberPicker
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ScreenLockPortrait
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.ThreeDRotation
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -32,6 +113,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.cos
+import kotlin.math.sin
+
+data class SoundOption(
+    val title: String,
+    val uriString: String?
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,6 +133,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             var isDarkTheme by remember { mutableStateOf(settings.isDarkTheme) }
             var keepScreenOn by remember { mutableStateOf(settings.keepScreenOn) }
+            var wakeOnAlert by remember { mutableStateOf(settings.wakeOnAlert) }
 
             LaunchedEffect(keepScreenOn) {
                 if (keepScreenOn) {
@@ -68,6 +161,11 @@ class MainActivity : ComponentActivity() {
                         onKeepScreenOnToggle = {
                             keepScreenOn = it
                             settings.keepScreenOn = it
+                        },
+                        wakeOnAlert = wakeOnAlert,
+                        onWakeOnAlertToggle = {
+                            wakeOnAlert = it
+                            settings.wakeOnAlert = it
                         }
                     )
                 }
@@ -83,9 +181,12 @@ fun LoopTimerScreen(
     isDarkTheme: Boolean,
     onThemeToggle: (Boolean) -> Unit,
     keepScreenOn: Boolean,
-    onKeepScreenOnToggle: (Boolean) -> Unit
+    onKeepScreenOnToggle: (Boolean) -> Unit,
+    wakeOnAlert: Boolean,
+    onWakeOnAlertToggle: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val timerState by TimerService.state.collectAsState()
 
     var hours by remember { mutableIntStateOf(settings.hours) }
@@ -94,23 +195,36 @@ fun LoopTimerScreen(
 
     var vibrateEnabled by remember { mutableStateOf(settings.vibrateEnabled) }
     var flashEnabled by remember { mutableStateOf(settings.flashEnabled) }
+    var displayMode by remember { mutableStateOf(settings.displayMode) }
     var ringtoneTitle by remember { mutableStateOf(settings.getRingtoneTitle(context)) }
+    var showSoundSheet by remember { mutableStateOf(false) }
+    var showStopDialog by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { }
 
     LaunchedEffect(Unit) {
-        val needed = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
             ) {
-                needed.add(Manifest.permission.POST_NOTIFICATIONS)
+                permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
             }
         }
-        if (needed.isNotEmpty()) {
-            permissionLauncher.launch(needed.toTypedArray())
+    }
+
+    fun triggerTestBlink() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val cameraManager = context.getSystemService(android.content.Context.CAMERA_SERVICE) as CameraManager
+                    val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return@withContext
+                    cameraManager.setTorchMode(cameraId, true)
+                    delay(140L)
+                    cameraManager.setTorchMode(cameraId, false)
+                } catch (_: Exception) { }
+            }
         }
     }
 
@@ -119,27 +233,24 @@ fun LoopTimerScreen(
     ) { granted ->
         flashEnabled = granted
         settings.flashEnabled = granted
+        if (granted) {
+            triggerTestBlink()
+        }
     }
 
-    val ringtonePickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-            }
-            settings.ringtoneUri = uri?.toString()
-            ringtoneTitle = settings.getRingtoneTitle(context)
-        }
+    fun applyTime(h: Int, m: Int, s: Int) {
+        hours = h
+        minutes = m
+        seconds = s
+        settings.hours = h
+        settings.minutes = m
+        settings.seconds = s
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Циклический таймер", fontWeight = FontWeight.SemiBold) },
+                title = { Text("LoopTimer", fontWeight = FontWeight.SemiBold) },
                 actions = {
                     IconButton(onClick = { onThemeToggle(!isDarkTheme) }) {
                         Icon(
@@ -158,44 +269,78 @@ fun LoopTimerScreen(
                 .padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
+            if (!timerState.isRunning) {
+                // Быстрые пресеты времени
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PresetChip(label = "15м", modifier = Modifier.weight(1f)) { applyTime(0, 15, 0) }
+                    PresetChip(label = "30м", modifier = Modifier.weight(1f)) { applyTime(0, 30, 0) }
+                    PresetChip(label = "45м", modifier = Modifier.weight(1f)) { applyTime(0, 45, 0) }
+                    PresetChip(label = "1ч", modifier = Modifier.weight(1f)) { applyTime(1, 0, 0) }
+                }
+            }
+
+            // Основной блок таймера / крутилок
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                 )
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
+                        .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (timerState.isRunning) {
-                        Text(
-                            text = if (timerState.isAlerting)
-                                "СИГНАЛ • КРУГ #${timerState.lapCount}"
-                            else
-                                "КРУГ #${timerState.lapCount}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (timerState.isAlerting)
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = formatDuration(timerState.remainingMillis),
-                            fontSize = 56.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        val progress = if (timerState.totalIntervalMillis > 0L) {
+                            (timerState.remainingMillis.toFloat() / timerState.totalIntervalMillis.toFloat())
+                                .coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+
+                        if (displayMode == DisplayMode.ORBIT_3D) {
+                            Orbit3DCountdown(
+                                remainingText = formatDuration(timerState.remainingMillis),
+                                lapText = if (timerState.isWaitingOk)
+                                    "ЖДЁТ ОК • КРУГ #${timerState.lapCount}"
+                                else
+                                    "КРУГ #${timerState.lapCount}",
+                                progress = progress,
+                                isWaitingOk = timerState.isWaitingOk
+                            )
+                        } else {
+                            Text(
+                                text = if (timerState.isWaitingOk)
+                                    "ЖДЁТ ОК • КРУГ #${timerState.lapCount}"
+                                else
+                                    "КРУГ #${timerState.lapCount}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (timerState.isWaitingOk)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = formatDuration(timerState.remainingMillis),
+                                fontSize = 56.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text = "Общее время: ${formatDuration(timerState.totalElapsedMillis)}",
                             style = MaterialTheme.typography.bodyMedium,
@@ -244,77 +389,58 @@ fun LoopTimerScreen(
                 }
             }
 
+            // Кнопки управления: ОК (когда время вышло) или СТАРТ / СТОП
             val totalMillis = ((hours * 3600L) + (minutes * 60L) + seconds) * 1000L
 
-            if (timerState.isRunning && timerState.isAlerting) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+            if (timerState.isRunning && timerState.isWaitingOk) {
+                Button(
+                    onClick = {
+                        val okIntent = Intent(context, TimerService::class.java).apply {
+                            action = TimerService.ACTION_OK
+                        }
+                        context.startService(okIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(68.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
                 ) {
-                    Button(
-                        onClick = {
-                            val muteIntent = Intent(context, TimerService::class.java).apply {
-                                action = TimerService.ACTION_MUTE
-                            }
-                            context.startService(muteIntent)
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(64.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.tertiary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsOff,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "ОК / МЬЮТ",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "ОК",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
-                    Button(
-                        onClick = {
-                            val stopIntent = Intent(context, TimerService::class.java).apply {
-                                action = TimerService.ACTION_STOP
-                            }
-                            context.startService(stopIntent)
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(64.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Stop,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "СТОП",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                OutlinedButton(
+                    onClick = { showStopDialog = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Стоп", fontWeight = FontWeight.SemiBold)
                 }
             } else {
                 Button(
                     onClick = {
                         if (timerState.isRunning) {
-                            val stopIntent = Intent(context, TimerService::class.java).apply {
-                                action = TimerService.ACTION_STOP
-                            }
-                            context.startService(stopIntent)
+                            showStopDialog = true
                         } else if (totalMillis > 0) {
                             val startIntent = Intent(context, TimerService::class.java).apply {
                                 action = TimerService.ACTION_START
@@ -349,129 +475,59 @@ fun LoopTimerScreen(
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp)
+            // Прячем опции ниже кнопки во время работы таймера
+            AnimatedVisibility(
+                visible = !timerState.isRunning,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
             ) {
-                Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    ListItem(
-                        headlineContent = { Text("Звук сигнала") },
-                        supportingContent = { Text(ringtoneTitle) },
-                        leadingContent = { Icon(Icons.Default.NotificationsActive, contentDescription = null) },
-                        trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
-                        modifier = Modifier.clickable {
-                            val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Выберите сигнал таймера")
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
-                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                                settings.ringtoneUri?.let {
-                                    putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(it))
-                                }
-                            }
-                            ringtonePickerLauncher.launch(intent)
-                        }
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-                    ListItem(
-                        headlineContent = { Text("Вибрация") },
-                        leadingContent = { Icon(Icons.Default.Vibration, contentDescription = null) },
-                        trailingContent = {
-                            Switch(
-                                checked = vibrateEnabled,
-                                onCheckedChange = {
-                                    vibrateEnabled = it
-                                    settings.vibrateEnabled = it
-                                }
-                            )
-                        }
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-                    ListItem(
-                        headlineContent = { Text("Моргание вспышкой") },
-                        leadingContent = { Icon(Icons.Default.FlashlightOn, contentDescription = null) },
-                        trailingContent = {
-                            Switch(
-                                checked = flashEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled && ContextCompat.checkSelfPermission(
-                                            context, Manifest.permission.CAMERA
-                                        ) != PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                    } else {
-                                        flashEnabled = enabled
-                                        settings.flashEnabled = enabled
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        ListItem(
+                            headlineContent = { Text("Анимация отсчёта") },
+                            supportingContent = {
+                                Text(
+                                    if (displayMode == DisplayMode.ORBIT_3D)
+                                        "3D-орбита с объёмом"
+                                    else
+                                        "Классические цифры"
+                                )
+                            },
+                            leadingContent = {
+                                Icon(Icons.Default.ThreeDRotation, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = displayMode == DisplayMode.ORBIT_3D,
+                                    onCheckedChange = { is3d ->
+                                        val mode = if (is3d) DisplayMode.ORBIT_3D else DisplayMode.CLASSIC
+                                        displayMode = mode
+                                        settings.displayMode = mode
                                     }
-                                }
-                            )
-                        }
-                    )
+                                )
+                            }
+                        )
 
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
-                    ListItem(
-                        headlineContent = { Text("Не выключать экран") },
-                        supportingContent = { Text("Пока открыто приложение") },
-                        leadingContent = { Icon(Icons.Default.ScreenLockPortrait, contentDescription = null) },
-                        trailingContent = {
-                            Switch(
-                                checked = keepScreenOn,
-                                onCheckedChange = onKeepScreenOnToggle
-                            )
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
+                        ListItem(
+                            headlineContent = { Text("Мелодия сигнала") },
+                            supportingContent = { Text(ringtoneTitle) },
+                            leadingContent = {
+                                Icon(Icons.Default.NotificationsActive, contentDescription = null)
+                            },
+                            trailingContent = {
+                                Icon(Icons.Default.ChevronRight, contentDescription = null)
+                            },
+                            modifier = Modifier.clickable {
+                                showSoundSheet = true
+                            }
+                        )
 
-@Composable
-fun WheelPickerColumn(
-    label: String,
-    value: Int,
-    range: IntRange,
-    textColor: Int,
-    onValueChange: (Int) -> Unit
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        AndroidView(
-            modifier = Modifier
-                .width(76.dp)
-                .height(140.dp),
-            factory = { ctx ->
-                NumberPicker(ctx).apply {
-                    minValue = range.first
-                    maxValue = range.last
-                    this.value = value
-                    setFormatter { String.format("%02d", it) }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        this.textColor = textColor
-                        this.textSize = 68f
-                    }
-                    setOnValueChangedListener { _, _, newVal ->
-                        onValueChange(newVal)
-                    }
-                }
-            },
-            update = { picker ->
-                if (picker.value != value) {
-                    picker.value = value
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    picker.textColor = textColor
-                }
-            }
-        )
-    }
-}
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                        ListItem(
+                            headlineContent = {
